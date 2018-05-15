@@ -1,0 +1,63 @@
+vcl 4.0;
+import directors;
+import std;
+#import querystring;
+
+include "backend.vcl";
+
+sub vcl_hit {
+    if (std.healthy(req.backend_hint)) {
+        std.log("backend is healthy at vcl_hit");
+        if (obj.ttl + 10s > 0s) {
+            set req.http.grace = "normal(limited)";
+            return (deliver);
+        } else {
+            return(deliver); #---> return(fetch);
+        }
+    } else {
+        std.log("backend is sick at vcl_hit");
+        if (obj.ttl + obj.grace > 0s) {
+            set req.http.grace = "full";
+            return (deliver);
+        } else {
+            return (deliver); #---> return(fetch);
+        }
+    }
+}
+
+sub vcl_deliver {
+    set resp.http.grace = req.http.grace;
+    unset resp.http.Via;
+    unset resp.http.X-Varnish;
+    unset resp.http.X-Application-Context;
+    unset resp.http.grace;
+    unset resp.http.Server;
+}
+
+sub vcl_backend_response {
+  set beresp.ttl = std.duration("${VARNISH_BACKEND_TTL}", 60s);
+  set beresp.grace = std.duration("${VARNISH_BACKEND_GRACE}", 60s);
+
+  if (bereq.method == "GET" && bereq.url ~ "\.(gif|jpg|jpeg|png|ico|img)$") {
+      unset beresp.http.Set-Cookie;
+      set beresp.ttl = std.duration("${VARNISH_IMAGE_TTL}", 3600s);
+  }
+
+  set bereq.http.stale-while-revalidate = regsub(beresp.http.Cache-Control, ".*stale-while-revalidate\=([0-9]+).*", "\1");
+  if(std.real(bereq.http.stale-while-revalidate, 0.0) > 0) {
+     set beresp.grace = std.duration(bereq.http.stale-while-revalidate + "s", beresp.grace);
+  }
+}
+
+sub vcl_hash {
+    hash_data(req.url);
+
+    #if (req.url ~ "^/api?") {
+    #    set req.url = querystring.regfilter_except(req.url, "^.*[?&](label=[^&]*).*$");
+    #    set req.url = querystring.regfilter(req.url, "^(?!label|type)");
+    #    std.log("hash_data by new req.url : " + req.url);
+    #    hash_data(req.url);
+    #}
+
+    return (lookup);
+}
