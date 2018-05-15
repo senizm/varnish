@@ -1,0 +1,37 @@
+backend server1 {
+    .host = "${VARNISH_BACKEND_HOST}";
+    .port = "${VARNISH_BACKEND_PORT}";
+}
+
+
+backend imageServer1 {
+    .host = "${VARNISH_IMAGE_HOST}";
+    .port = "${VARNISH_IMAGE_PORT}";
+}
+
+sub vcl_recv {
+    unset req.http.Cookie;
+    set req.http.grace = "none";
+
+    # Only cache GET or HEAD requests. This makes sure the POST requests are always passed.
+    if (req.method != "GET" && req.method != "HEAD") {
+        return (pass);
+    }
+
+    if (req.method == "GET" && req.url == "/varnish-status") {
+        return (synth(200, "OK"));
+    }
+    if (req.method == "GET" && req.url ~ "images\/.+") {
+        set req.backend_hint = imageServer1;
+    }
+    else {
+        set req.backend_hint = server1;
+    }
+}
+
+sub vcl_synth {
+    set resp.status = 200;
+    set resp.http.Content-Type = "text/plain; charset=utf-8";
+    synthetic("Varnish is up!");
+    return (deliver);
+}

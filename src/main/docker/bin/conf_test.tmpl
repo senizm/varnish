@@ -1,0 +1,36 @@
+backend server1 {
+    .host = "${VARNISH_BACKEND_HOST}";
+    .port = "${VARNISH_BACKEND_PORT}";
+}
+backend server2 {
+    .host = "${VARNISH_BACKEND_HOST2}";
+    .port = "${VARNISH_BACKEND_PORT2}";
+}
+
+backend imageServer1 {
+    .host = "${VARNISH_IMAGE_HOST}";
+    .port = "${VARNISH_IMAGE_PORT}";
+}
+
+sub vcl_init {
+    new bar = directors.round_robin();
+    bar.add_backend(server1);
+    bar.add_backend(server2);
+}
+
+sub vcl_recv {
+    unset req.http.Cookie;
+    set req.http.grace = "none";
+
+    # Only cache GET or HEAD requests. This makes sure the POST requests are always passed.
+        if (req.method != "GET" && req.method != "HEAD") {
+        return (pass);
+    }
+
+    if (req.method == "GET" && req.url ~ "images\/.+") {
+        set req.backend_hint = imageServer1;
+    }
+    else {
+        set req.backend_hint = bar.backend();
+    }
+}
